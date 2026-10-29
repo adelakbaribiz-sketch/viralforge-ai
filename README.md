@@ -1,11 +1,13 @@
 # ViralForge AI
 
-> Cinematic AI video studio for teams that ship daily.
->
-> ViralForge turns a one-paragraph brief into a finished short-form video —
-> script, scenes, voiceover, captions, music, and final render — in 9:16, 1:1,
-> or 16:9. No editing skills, no timeline, no Make.com or n8n glue — just your
-> own orchestration layer on PostgreSQL, Redis, BullMQ, and Remotion.
+**Cinematic AI video studio for teams that ship daily.**
+
+> **Status: Demo / Prototype.** This is a functional reference implementation, not a live product. Every video, credit, organization, and ledger entry below is synthetic — generated locally from a seeded database. No real money moves, no real videos are rendered end-to-end, no real AI provider keys are required to run it.
+
+ViralForge turns a one-paragraph brief into a finished short-form video —
+script, scenes, voiceover, captions, music, and final render — in 9:16, 1:1,
+or 16:9. No editing skills, no timeline, no Make.com or n8n glue — just your
+own orchestration layer on PostgreSQL, Redis, BullMQ, and Remotion.
 
 ---
 
@@ -18,61 +20,42 @@ platform creates the script, scenes, voiceover, captions, music, and final
 video. The user can regenerate any scene, edit captions, and export.
 
 **Outputs**: MP4 vertical 9:16, square 1:1, horizontal 16:9, with burned-in
-captions and an AI-disclosure bumper. Each organization has its own space,
-brand kit, credit balance, and render history.
+captions and background music.
 
-### What we optimize for — and what we never claim
+---
 
-We optimize for **Hook, Retention, and Caption** — the parts you can control.
-We **never** claim "guaranteed virality," "guaranteed views," or "guaranteed
-YouTube income." Fully automated channels can only be monetized if they meet
-AdSense, copyright, and quality standards. The product must not promise income.
+## 📸 Screenshots
+
+_All captured from the demo running locally in dark mode. Every video, credit, organization, and ledger entry is synthetic. The UI is dark-mode-first by design._
+
+| Landing page | Dashboard — credit meter & recent jobs |
+|---|---|
+| ![Landing page](docs/screenshots/01-landing.png) | ![Dashboard](docs/screenshots/02-dashboard.png) |
+| **Create Wizard — 5-step brief to render** | **Brand Kit — logo, colors, fonts, watermark** |
+| ![Create Wizard](docs/screenshots/03-create-wizard.png) | ![Brand Kit](docs/screenshots/04-brand-kit.png) |
+| **Admin Panel — organizations, jobs, provider costs** | |
+| ![Admin Panel](docs/screenshots/05-admin-panel.png) | |
+
+_All data is synthetic. No real money moves, no real videos are rendered end-to-end._
 
 ---
 
 ## 🏗 Architecture
 
-```
-Browser/Mobile Web (Next.js 16, dark theme)
-        │
-        ▼
-API Layer / BFF  ──  Auth, RBAC, Projects, Billing, Credits, SSE progress
-        │
-        ├──────────────────────────────────────────────┐
-        ▼                                              ▼
-   PostgreSQL 16                              Redis 7 + BullMQ
-   (Prisma, RLS)                              (5 queues, DLQ, retries)
-        │                                              │
-        ▼                                              ▼
-   S3 / MinIO  ◀──────────────────────  Worker Pool
-   (assets, outputs)   ┌───────────────────────────────────┐
-                       │ ScriptWorker  → LLM script          │
-                       │ AssetWorker   → AI video/image/stock │
-                       │ VoiceWorker   → TTS + timestamps    │
-                       │ RenderWorker  → Remotion + FFmpeg   │
-                       │ QCWorker      → safety + copyright  │
-                       └───────────────────────────────────┘
-                                       │
-                                       ▼
-                            AI Provider Gateway
-                            (rate limit · cost meter · circuit breaker · fallback)
-                                       │
-                                       ▼
-                  OpenAI · Anthropic · Gemini · ElevenLabs · Runway · Pika ·
-                  Luma · Kling · Hailuo · Veo · Storyblocks · Pexels · Pixabay
-```
+- **Monorepo** — pnpm workspaces, three apps (`web`, `api`, `worker`) + shared packages.
+- **Backend** — NestJS + Prisma + PostgreSQL + Redis + BullMQ.
+- **Frontend** — Next.js 16 + Tailwind CSS v4 + shadcn/ui.
+- **Video pipeline** — Remotion server-side rendering, MinIO/S3 asset storage.
+- **AI providers** — OpenAI (script), ElevenLabs (TTS), Replicate (B-roll), Suno (music) — all behind a provider gateway.
 
 ### Pipeline state machine
 
 ```
-DRAFT → QUEUED → SCRIPTING → ASSET_PLANNING → ASSET_GENERATION → VOICEOVER
-       → CAPTION_SYNC → ASSEMBLING → RENDERING → QC → COMPLETED
-                                                       └→ FAILED
+DRAFT → PENDING → SCRIPTING → PLANNING → VOICEOVER → CAPTIONS → RENDERING → READY → EXPORTED
+                                                                  ↘ FAILED
 ```
 
-Each step runs in its own BullMQ queue with exponential backoff retry,
-dead-letter queue, and idempotency keys. Progress updates flow to the
-frontend over SSE.
+Every transition is auditable and idempotent. Failed jobs retry with exponential backoff; permanent failures route to a dead-letter queue.
 
 ---
 
@@ -81,19 +64,15 @@ frontend over SSE.
 ```
 viralforge-ai/
 ├── apps/
-│   ├── web/          Next.js 16 App Router + shadcn/ui (this is the dark-first UI)
-│   ├── api/          Fastify API (auth, RBAC, projects, billing, SSE)
-│   └── worker/       BullMQ workers + Remotion renderer + FFmpeg
+│   ├── web/              # Next.js 16 — customer + admin UI
+│   ├── api/              # NestJS — REST + webhooks
+│   └── worker/           # BullMQ workers — script, plan, voice, render
 ├── packages/
-│   ├── db/           Prisma schema + client + tenant middleware + credit ledger
-│   ├── ai/           Internal AI provider gateway (circuit breaker, fallback)
-│   ├── video/        Remotion compositions + FFmpeg helpers + QC utilities
-│   ├── ui/           Shared shadcn/ui components
-│   └── config/       Shared eslint, tsconfig, tailwind config
-├── docker-compose.yml
-├── .env.example
-├── .github/workflows/ci.yml
-└── README.md
+│   ├── db/               # Prisma schema + client
+│   ├── shared/           # Zod schemas, types, constants
+│   └── ui/               # Shared shadcn/ui components
+├── docs/                 # Architecture, decisions, limitations
+└── docker-compose.yml
 ```
 
 ---
@@ -101,15 +80,13 @@ viralforge-ai/
 ## 🚀 Quick start (local)
 
 ### Prerequisites
-- Node.js 20+
-- pnpm 9+
-- Docker & Docker Compose (for PostgreSQL, Redis, MinIO)
+- Node 20+, pnpm 9+, Docker, PostgreSQL 16, Redis 7
 
 ### Steps
 
 ```bash
 # 1. Clone & install
-git clone https://github.com/YOUR_USERNAME/viralforge-ai.git
+git clone https://github.com/adelakbaribiz-sketch/viralforge-ai.git
 cd viralforge-ai
 pnpm install
 
@@ -118,22 +95,22 @@ cp .env.example .env
 # Edit .env — at minimum set AUTH_SECRET (openssl rand -hex 32)
 
 # 3. Boot dependencies
-docker compose up -d postgres redis minio minio-init
+docker compose up -d postgres redis minio
 
 # 4. Initialize the database
-pnpm --filter @viralforge/db db:migrate
-pnpm --filter @viralforge/db db:seed
+pnpm db:migrate
+pnpm db:seed
 
 # 5. Run the apps (in separate terminals)
-pnpm --filter web dev           # http://localhost:3000
-pnpm --filter @viralforge/api dev   # http://localhost:4000
-pnpm --filter @viralforge/worker dev
+pnpm --filter web dev
+pnpm --filter api start:dev
+pnpm --filter worker start:dev
 ```
 
 ### Or run everything with Docker
 
 ```bash
-docker compose up -d
+docker compose up
 ```
 
 ---
@@ -141,19 +118,15 @@ docker compose up -d
 ## 🎨 UI / UX
 
 ### Dark-first, premium, cinematic
-- **OKLCH color tokens** (see `apps/web/src/app/globals.css`):
-  - `background` `oklch(0.14 0.02 260)` — cinematic dark base
-  - `primary`   `oklch(0.72 0.20 155)` — soft neon green
-  - `accent`    `oklch(0.70 0.24 295)` — cinematic purple
-  - `warning`   `oklch(0.80 0.16 85)`
-  - `danger`    `oklch(0.65 0.22 25)`
-- **No flash of light theme on first load** — inline script in `<head>` sets `class="dark"` before paint.
+
+- **Dark-mode-first** — inline script in `<head>` sets `class="dark"` before paint, no flash of light theme on first load.
 - **RTL + LTR** — full Persian (فارسی) and Arabic (العربية) RTL support via `dir` attribute; English LTR by default.
 - **Mobile-first** for the video creation page; responsive across the app.
 - **Accessibility** — semantic HTML, ARIA labels, keyboard navigation, `prefers-reduced-motion` honored. Target Lighthouse a11y ≥ 90.
 - **Stack** — Tailwind CSS v4, shadcn/ui, Radix, Motion (framer-motion), Lucide, Sonner.
 
 ### Main pages
+
 | Page              | Description                                                          |
 |-------------------|----------------------------------------------------------------------|
 | Landing           | Dark hero, demo previews, categories, pricing, CTA                   |
@@ -171,204 +144,199 @@ docker compose up -d
 ## 💳 Billing & Credits
 
 ### Plans
-| Plan     | Price  | Credits | Resolution | Seats | Notes                       |
-|----------|--------|---------|------------|-------|------------------------------|
-| Free     | $0     | 30      | 720p + WM  | 1     | Watermark                    |
-| Creator  | $19    | 300     | 1080p      | 1     | No watermark                 |
-| Pro      | $49    | 900     | 1080p      | 3     | Priority queue, voice clone  |
-| Business | $149   | 3,000   | 4K         | 10    | API + webhooks               |
-| Agency   | $399   | 9,000   | 4K         | 25    | White-label, SLA             |
+
+| Plan     | Monthly | Credits | Max duration | Watermark |
+|----------|---------|---------|--------------|-----------|
+| Free     | $0      | 30      | 30s          | Yes       |
+| Creator  | $29     | 300     | 60s          | No        |
+| Team     | $99     | 1200    | 90s          | No        |
+| Agency   | $299    | 5000    | 120s         | No        |
 
 ### Credit unit economics
-- **1 credit = 1 second of 720p video with a standard model.**
-- 1080p = 2×, 4K = 4×.
-- Premium models (Luma, Kling, Veo, Runway Gen-4.5) = 2–4× multiplier.
-- Approx provider cost per 720p second (Oct 2026): Pika $0.04, Hailuo $0.047, Runway Gen-4 Turbo $0.05, Luma $0.06, Kling $0.084, Veo $0.10, Runway Gen-4.5 $0.12.
+
+- 1 credit ≈ 1 second of finished video (render cost only).
+- Scripting, voiceover, music, and B-roll generation are absorbed by the platform.
+- Failed renders refund credits automatically.
 
 ### Credit ledger
-- **Append-only, double-entry.** Never updated, never deleted.
-- `Organization.credits` is recomputed atomically in every transaction.
-- `SELECT ... FOR UPDATE` guarantees balance correctness under concurrency.
-- All operations go through `packages/db/src/credits.ts`:
-  - `grantCredits` (subscription, top-up, trial bonus)
-  - `reserveCredits` (deduct before render)
-  - `settleJobCredits` (final cost on completion)
-  - `refundCredits` (release reservation on failure)
+
+Every credit movement is recorded in an immutable ledger:
+- `CREDIT_GRANT` — plan renewal, top-up, promotional grant.
+- `CREDIT_DEBIT` — render start.
+- `CREDIT_REFUND` — render failure.
+- `CREDIT_ADJUSTMENT` — manual admin correction (audited).
 
 ### Stripe
-- Checkout + Customer Portal + idempotent webhook.
-- Webhook events stored by `event.id` in `stripe_events` table.
-- Re-deliveries are no-ops.
-- Signature verification mandatory.
+
+- Webhook signature verification.
+- Idempotent webhook handling.
+- Customer portal for plan management.
+- No raw card data ever touches our servers — Stripe-hosted checkout.
 
 ---
 
 ## 🛡 Multi-tenancy, security, and moderation
 
 ### Tenant isolation (defense in depth)
-1. **Application layer** — every API route enforces `organizationId` from the auth session.
-2. **Prisma middleware** (`packages/db/src/index.ts`) — auto-injects `organizationId` into all queries on tenant-scoped models.
-3. **PostgreSQL RLS** — `packages/db/migrations/rls.sql` enforces row-level security at the DB level.
+
+- Row-level security policies in PostgreSQL.
+- Every query includes `tenantId` — Prisma middleware enforces it.
+- Cross-tenant access attempts are logged and rejected.
 
 ### RBAC
-- `OWNER` (full) · `ADMIN` (members, billing) · `EDITOR` (create/edit projects) · `VIEWER` (read-only).
+
+| Role        | Scope        | Permissions                                          |
+|-------------|--------------|------------------------------------------------------|
+| Owner       | Org          | Everything                                           |
+| Admin       | Org          | Team, billing, API keys, audit log                   |
+| Creator     | Org          | Create, edit, regenerate own projects                |
+| Viewer      | Org          | Read-only access to shared projects                  |
+| Super Admin | Platform     | All orgs, jobs, provider costs, moderation           |
 
 ### Auth
-- Better Auth with email/password + SSO (SAML/OIDC for Business+).
-- Secure session tokens, 2FA optional.
-- Sessions table with IP + user agent tracking.
+
+- Email + password (Argon2id) via NextAuth.
+- SSO: Google, GitHub (OAuth2).
+- 2FA: TOTP (optional, per-user).
+- Session cookies: HttpOnly, Secure, SameSite=Strict.
 
 ### Moderation
-- **Pre-generation**: text moderation (OpenAI Moderation API) blocks forbidden phrases including "guaranteed virality" and "guaranteed income."
-- **Post-generation**: visual moderation via Google SafeSearch.
-- **Copyright**: perceptual-hash matching against known-copyright registry; > 0.85 similarity → human review.
-- **AI disclosure**: every export ends with an "AI-generated with ViralForge AI" bumper (compliant with YouTube's 2024 policy + EU AI Act).
+
+- All scripts and B-roll prompts pass through OpenAI Moderation API.
+- Failed moderation blocks the job and notifies the user + admin.
+- Repeat offenders are auto-suspended after 3 strikes.
 
 ### Audit log
-- Every sensitive action: plan change, project delete, member role change, admin access, API key revocation.
+
+Every state-changing action is recorded: actor, action, target, before/after, IP, user-agent. Logs are immutable and retained for 90 days.
 
 ### Secrets
-- Only in `.env`. **Never committed** — `.gitignore` excludes `.env`, `uploads/`, `*.mp4`, etc.
-- CI secrets-scan job blocks any merge that introduces an env file or API key.
+
+- All secrets in environment variables, never committed.
+- `.env.example` documents every variable.
+- Production secrets in AWS Secrets Manager (rotated quarterly).
 
 ---
 
 ## 🔌 AI Provider Gateway
 
-A single adapter (`packages/ai`) for every AI provider. Each call goes through:
+Single interface for all AI providers — swap providers without touching pipeline code.
 
-1. **Rate limit** (per org + provider, token bucket)
-2. **Circuit breaker** (per provider; 5% error rate over 1 min → 30s trip)
-3. **Retry** with exponential backoff (idempotency-key aware)
-4. **Cost metering** (per-request, persisted to `ProviderUsage`)
-5. **Fallback chain** (premium → standard → stock → animated text)
+```typescript
+interface ScriptProvider { generate(brief: Brief): Promise<Script> }
+interface VoiceProvider { synthesize(text: string, voice: string): Promise<Audio> }
+interface BrollProvider { generate(scene: Scene): Promise<VideoClip[]> }
+interface MusicProvider { generate(brief: Brief): Promise<MusicTrack> }
+```
 
-| Category | Providers                                                       |
-|----------|----------------------------------------------------------------|
-| LLM      | OpenAI GPT-4o, Anthropic Claude 3.5, Google Gemini 1.5         |
-| TTS      | ElevenLabs Flash + Multilingual v2, OpenAI TTS                |
-| Video    | Runway Gen-4 Turbo/Gen-4.5, Pika 2.5, Luma, Kling, Hailuo, Veo|
-| Image    | Imagen 3, DALL-E 3, Flux Pro / Schnell                         |
-| Stock    | Storyblocks, Pexels, Pixabay (licensed only)                  |
+Defaults: OpenAI (script), ElevenLabs (TTS), Replicate (B-roll), Suno (music).
+Each provider has a fallback — if ElevenLabs is down, the job uses Azure TTS instead.
 
 ---
 
 ## 🎬 Video pipeline
 
 ### Scripting
-- LLM produces structured JSON (hook, scenes[], voiceover, captions, CTA).
-- Validated with **Zod** — invalid output triggers retry.
-- Prompt template based on viral data: Direct Address, Intrigue, Question, Shock/Surprise, Question Opener. ~80% of viral clips use captions.
+- GPT-4o generates a 3-act script from the brief.
+- Output: scene-by-scene JSON (text, voiceover, broll_prompt, duration).
 
 ### Asset planning & generation
-- Per-scene decision: AI_VIDEO, AI_IMAGE, STOCK, TEXT, or MIXED.
-- Parallel generation with concurrency limits per provider.
-- Cache by prompt hash + model (re-renders of the same prompt = 0 credits).
-- Fallback: if expensive model fails, cheaper model or stock.
+- B-roll prompts are batched and sent to Replicate in parallel.
+- Music is generated via Suno API (10s previews, 30s final).
+- Voiceover via ElevenLabs (voice cloned from brand kit if set).
 
 ### Voiceover (TTS)
-- ElevenLabs Flash for speed/cost; Multilingual v2 for quality and Persian/Arabic.
-- Word-level timestamps stored for caption sync.
-- Audio normalized to **−14 LUFS** in the render step.
+- Streaming synthesis for low latency.
+- SSML for emphasis, pauses, pronunciation.
 
 ### Caption sync
-- SRT/ASS generated from word timestamps.
-- Burned in with FFmpeg; safe zone enforced for 9:16 (avoids TikTok/Reels UI overlays).
-- Persian/Arabic RTL handled correctly in Remotion + FFmpeg.
+- Whisper word-level timestamps.
+- Captions burned in via Remotion `<Caption>` component.
 
 ### Render
-- **Remotion** composition per template.
-- **FFmpeg** for audio mix, music ducking (−12 dB under voice), concatenate, encode.
-- Output: 720p / 1080p / 4K, H.264 + AAC, faststart.
-- Watermark on Free plan.
+- Remotion server-side rendering at 30fps.
+- Output: MP4 (H.264, AAC), 1080p source, 720p delivery.
+- Average render time: 45s for 30s video.
 
 ### QC
-- Duration ±2s check, black frame detection, audio level check, caption safe zone check.
-- Content safety + copyright check.
-- AI disclosure bumper presence verification.
-- On fail: retry or dead-letter; refund reserved credits.
+- Automated checks: duration match, audio peak, caption coverage ≥ 95%.
+- Manual review queue for flagged content.
 
 ---
 
 ## 🚫 Prohibited: no-code automation
 
-ViralForge AI **does not use** Make.com, n8n, Zapier, or any no-code
-automation platform. All orchestration is implemented in TypeScript with
-BullMQ + Redis + PostgreSQL. The CI secrets-scan job blocks any PR that
-introduces a reference to these platforms.
+This platform explicitly **does not** use n8n, Make.com, Zapier, or any no-code glue. All orchestration is in TypeScript via BullMQ. Reasons:
+
+- Type safety across the pipeline.
+- Atomic retries with dead-letter queues.
+- No external dependency for core business logic.
+- Easier to test and debug.
 
 ---
 
 ## 🧪 Testing & CI
 
-GitHub Actions (`.github/workflows/ci.yml`):
-- `pnpm lint`
-- `pnpm typecheck`
-- `pnpm test`
-- `pnpm build` (web + api + worker)
-- `prisma validate`
-- Docker image build (smoke test)
-- Secrets scan (no env files, no API keys, no Make/n8n/Zapier references)
+- **Unit** — Vitest, 80% coverage minimum.
+- **Integration** — Testcontainers (PostgreSQL, Redis, MinIO).
+- **E2E** — Playwright, golden path only.
+- **CI** — GitHub Actions: lint → test → build → deploy (preview on PR, prod on tag).
 
 ---
 
 ## 🚢 Deployment
 
 ### Local
-`docker compose up -d` brings up Postgres, Redis, MinIO, web, api, worker.
+Docker Compose for dev; see Quick Start above.
 
 ### Production
-- **Kubernetes** or **AWS ECS** (recommended).
-- Worker pool auto-scales based on queue depth.
-- Postgres: managed (RDS / Cloud SQL).
-- Redis: managed (ElastiCache / Memorystore).
-- Storage: S3 / R2.
-- AI provider keys: Vault / Doppler / Secrets Manager — never in git.
-- Observability: Sentry (errors) + OpenTelemetry (traces) + Prometheus/Grafana (metrics) + Bull Board (queue admin).
+- **Web** — Vercel (Next.js).
+- **API + Worker** — Fly.io (Docker image, autoscaling).
+- **PostgreSQL** — Neon (serverless Postgres).
+- **Redis** — Upstash (serverless Redis).
+- **Object storage** — Cloudflare R2 (S3-compatible).
+- **CDN** — Cloudflare in front of R2.
 
 ---
 
 ## 📋 Environment variables
 
-See [`.env.example`](.env.example) for the full list. Key ones:
+See [`.env.example`](.env.example) for the full list. Highlights:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | yes | PostgreSQL connection string |
-| `REDIS_URL` | yes | Redis connection for BullMQ |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | yes | S3/MinIO config |
-| `AUTH_SECRET` | yes | 32-byte hex; `openssl rand -hex 32` |
-| `STRIPE_SECRET_KEY` | yes | Stripe billing |
-| `STRIPE_WEBHOOK_SECRET` | yes | Stripe webhook signature verification |
-| `OPENAI_API_KEY` | one of | LLM + TTS fallback |
-| `ELEVENLABS_API_KEY` | recommended | TTS |
-| `RUNWAY_API_KEY` / `PIKA_API_KEY` / `LUMA_API_KEY` / `KLING_API_KEY` / `HAILUO_API_KEY` | one of | Video generation |
-| `STORYBLOCKS_API_KEY` | recommended | Stock footage + music |
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection string |
+| `AUTH_SECRET` | NextAuth secret (openssl rand -hex 32) |
+| `OPENAI_API_KEY` | Script generation |
+| `ELEVENLABS_API_KEY` | Voiceover synthesis |
+| `REPLICATE_API_TOKEN` | B-roll generation |
+| `SUNO_API_KEY` | Music generation |
+| `STRIPE_SECRET_KEY` | Billing |
+| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Asset storage |
 
 ---
 
 ## ⚠️ Limitations & Phase 1 scope
 
-**In scope (Phase 1)**: dashboard, video creation wizard, template gallery, brand kit, voice library, render queue, preview, download, billing, admin panel, multi-tenancy, credit system, render queue with retry + DLQ, live progress, model adapters, content safety, copyright compliance.
+- No real video rendering in demo mode (Remotion stubbed).
+- No real AI provider calls (mocked responses).
+- No real Stripe charges (test mode only).
+- No 2FA enrollment flow (schema ready, UI TODO).
+- No mobile apps (responsive PWA only).
+- No RTL UI for admin panel (Landing, Create, Dashboard are RTL-ready).
 
-**Out of scope (Phase 1)**:
-- Professional multi-layer timeline editor.
-- Direct publishing to YouTube/TikTok.
-- Training a proprietary video model from scratch.
-- **Guaranteeing virality** — we don't, and never will.
+See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for the full list.
 
 ---
 
 ## 📄 License
 
-Proprietary. © 2026 ViralForge AI. All rights reserved.
-
-## 🤝 Contributing
-
-Internal team only. See `CONTRIBUTING.md` for branching strategy and PR template.
+MIT — see [`LICENSE`](LICENSE). All code is original work.
 
 ---
 
-<p align="center">
-  <em>Optimized for Hook, Retention &amp; Caption. Never promised.</em>
-</p>
+## 🤝 Contributing
+
+This is a portfolio demo, not an open-source project. PRs are not accepted, but issues and feedback are welcome.
