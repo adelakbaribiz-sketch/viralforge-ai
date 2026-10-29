@@ -1,0 +1,567 @@
+// =============================================================================
+// ViralForge AI — Production Prisma schema
+// =============================================================================
+// Multi-tenant SaaS for AI-generated short-form viral videos.
+// All records carry organizationId. Isolation is enforced by:
+//   1. Prisma middleware (packages/db/src/tenant-middleware.ts)
+//   2. PostgreSQL Row-Level Security (packages/db/migrations/rls.sql)
+//   3. API-layer authorization (apps/api/src/auth/rbac.ts)
+//
+// CreditLedger is append-only and never updated. Balance is computed by
+// atomic transaction on every credit-affecting operation.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // In monorepo: output to packages/db/dist
+  // output   = "../dist"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Pooling is recommended in production:
+  // directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum Plan {
+  FREE
+  CREATOR
+  PRO
+  BUSINESS
+  AGENCY
+}
+
+enum ProjectStatus {
+  DRAFT
+  QUEUED
+  SCRIPTING
+  ASSET_PLANNING
+  ASSET_GENERATION
+  VOICEOVER
+  CAPTION_SYNC
+  ASSEMBLING
+  RENDERING
+  QC
+  COMPLETED
+  FAILED
+}
+
+enum AssetType {
+  VIDEO
+  IMAGE
+  AUDIO
+  MUSIC
+  CAPTION
+}
+
+enum SceneAssetType {
+  AI_VIDEO
+  AI_IMAGE
+  STOCK
+  TEXT
+  MIXED
+}
+
+enum SceneStatus {
+  READY
+  REGENERATING
+  FAILED
+}
+
+enum Resolution {
+  P720
+  P1080
+  P4K
+}
+
+enum AspectRatio {
+  R9_16
+  R1_1
+  R16_9
+}
+
+enum LedgerReason {
+  SUBSCRIPTION_GRANT
+  RENDER_SPEND
+  RENDER_REFUND
+  TOPUP
+  ADJUSTMENT
+  TRIAL_BONUS
+}
+
+enum ProviderCategory {
+  LLM
+  TTS
+  VIDEO
+  IMAGE
+  STOCK
+}
+
+enum ModerationType {
+  TEXT
+  IMAGE
+  VIDEO
+  MUSIC
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  BLOCKED
+  FLAGGED
+}
+
+enum JobQueueName {
+  SCRIPT
+  ASSET
+  VOICE
+  RENDER
+  QC
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+// -----------------------------------------------------------------------------
+// Multi-tenancy core
+// -----------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      Plan     @default(FREE)
+  credits   Int      @default(30) // current spendable balance; mutated only via CreditLedger
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships     Membership[]
+  projects        Project[]
+  assets          Asset[]
+  renderJobs      RenderJob[]
+  ledgerEntries   CreditLedger[]
+  subscription    Subscription?
+  brandKit        BrandKit?
+  apiKeys         ApiKey[]
+  webhooks        Webhook[]
+  auditLogs       AuditLog[]
+  moderationItems ModerationItem[]
+  providerUsages  ProviderUsage[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  passwordHash  String? // null if SSO-only
+  image         String?
+  twoFactor     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships Membership[]
+  auditLogs    AuditLog[]
+  sessions     Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  expiresAt    DateTime
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role     @default(VIEWER)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// -----------------------------------------------------------------------------
+// Projects & Scenes
+// -----------------------------------------------------------------------------
+
+model Project {
+  id             String        @id @default(cuid())
+  organizationId String
+  title          String
+  category       String
+  brief          Json          // { topic, audience, tone, language, durationSec, aspectRatio, cta, ... }
+  status         ProjectStatus @default(DRAFT)
+  aspectRatio    AspectRatio   @default(R9_16)
+  language       String        @default("en")
+  durationSec    Int           @default(30)
+  resolution     Resolution    @default(P1080)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenes       Scene[]
+  renderJobs   RenderJob[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("projects")
+}
+
+model Scene {
+  id            String        @id @default(cuid())
+  projectId     String
+  index         Int
+  scriptText    String
+  visualPrompt  String
+  assetType     SceneAssetType @default(AI_VIDEO)
+  assetId       String?
+  startMs       Int
+  endMs         Int
+  caption       String
+  metadata      Json?          // { provider, model, costUsd, generationTimeMs, promptHash, ... }
+  status        SceneStatus    @default(READY)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, index])
+  @@map("scenes")
+}
+
+// -----------------------------------------------------------------------------
+// Assets (S3/MinIO references)
+// -----------------------------------------------------------------------------
+
+model Asset {
+  id             String     @id @default(cuid())
+  organizationId String
+  type           AssetType
+  url            String     // signed URL or s3://bucket/key
+  provider       String     // storyblocks | openai | elevenlabs | runway | pika | ...
+  hash           String?    // perceptual hash for copyright matching
+  key            String     // S3 object key
+  sizeBytes      Int?
+  metadata       Json?      // { durationSec, width, height, mimeType, licenseId, ... }
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, type])
+  @@index([hash])
+  @@map("assets")
+}
+
+// -----------------------------------------------------------------------------
+// Render jobs (queue + state machine)
+// -----------------------------------------------------------------------------
+
+model RenderJob {
+  id                   String        @id @default(cuid())
+  projectId            String
+  organizationId       String
+  status               ProjectStatus @default(QUEUED)
+  progress             Int           @default(0)
+  idempotencyKey       String        @unique // prevents duplicate submission on retry
+  queueName            JobQueueName  @default(SCRIPT)
+  error                String?
+  errorMessage         String?
+  retryCount           Int           @default(0)
+  outputUrl            String?
+  outputKey            String?
+  aspectRatio          AspectRatio   @default(R9_16)
+  resolution           Resolution    @default(P1080)
+  durationSec          Int
+  estimatedCostCredits Int
+  actualCostCredits    Int?
+  model                String
+  providerUsageJson   Json?          // per-step cost breakdown
+  createdAt            DateTime      @default(now())
+  startedAt            DateTime?
+  completedAt          DateTime?
+  updatedAt            DateTime      @updatedAt
+
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ledgerEntries  CreditLedger[]
+
+  @@index([organizationId, status])
+  @@index([projectId])
+  @@index([status, createdAt])
+  @@map("render_jobs")
+}
+
+// -----------------------------------------------------------------------------
+// Credit Ledger — append-only, double-entry
+// -----------------------------------------------------------------------------
+// NEVER update or delete a row. Balance is computed as
+//   SUM(delta) WHERE organizationId = ?
+// Mutations go through a single atomic transaction in packages/db/src/credits.ts
+// -----------------------------------------------------------------------------
+
+model CreditLedger {
+  id             String       @id @default(cuid())
+  organizationId String
+  delta          Int          // signed: +grant, -spend, +refund
+  reason         LedgerReason
+  refId          String       // e.g. job_id, stripe_event_id, topup_id
+  balanceAfter   Int          // snapshot for fast reads; recomputed atomically
+  createdAt      DateTime     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([reason])
+  @@map("credit_ledger")
+}
+
+// -----------------------------------------------------------------------------
+// Subscription (Stripe)
+// -----------------------------------------------------------------------------
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  organizationId       String             @unique
+  stripeCustomerId     String             @unique
+  stripeSubscriptionId String?            @unique
+  plan                 Plan               @default(FREE)
+  status               SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([stripeCustomerId])
+  @@map("subscriptions")
+}
+
+// -----------------------------------------------------------------------------
+// Stripe webhook idempotency log
+// -----------------------------------------------------------------------------
+
+model StripeEvent {
+  id        String    @id // stripe event.id (evt_...)
+  type      String
+  createdAt DateTime  @default(now())
+  handledAt DateTime?
+  payload   Json
+
+  @@map("stripe_events")
+}
+
+// -----------------------------------------------------------------------------
+// Brand kit (one per org)
+// -----------------------------------------------------------------------------
+
+model BrandKit {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  logoKey        String?
+  logoUrl        String?
+  primaryColor   String   @default("oklch(0.72 0.20 155)")
+  secondaryColor String   @default("oklch(0.70 0.24 295)")
+  fontFamily     String   @default("inter")
+  introKey       String?
+  introUrl       String?
+  outroKey       String?
+  outroUrl       String?
+  watermarkKey   String?
+  watermarkUrl   String?
+  defaultMusicId String? // asset id of licensed track
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("brand_kits")
+}
+
+// -----------------------------------------------------------------------------
+// Templates
+// -----------------------------------------------------------------------------
+
+model Template {
+  id          String   @id @default(cuid())
+  category    String
+  name        String
+  description String
+  config      Json     // { sceneType, bRoll, music, cta, hook }
+  isPublic    Boolean  @default(true)
+  uses        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category, isPublic])
+  @@map("templates")
+}
+
+// -----------------------------------------------------------------------------
+// AI provider usage & cost metering
+// -----------------------------------------------------------------------------
+
+model ProviderUsage {
+  id            String           @id @default(cuid())
+  organizationId String
+  provider      String           // openai | anthropic | elevenlabs | runway | pika | ...
+  category      ProviderCategory
+  model         String           // gpt-4o | claude-3.5 | eleven-multilingual-v2 | ...
+  calls         Int              @default(0)
+  costUsd       Decimal          @db.Decimal(12, 4) @default(0)
+  inputTokens   Int              @default(0)
+  outputTokens  Int              @default(0)
+  durationSec   Int              @default(0) // for video/audio
+  avgLatencyMs  Int              @default(0)
+  errorCount    Int              @default(0)
+  lastCallAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, provider])
+  @@unique([organizationId, provider, model])
+  @@map("provider_usage")
+}
+
+// -----------------------------------------------------------------------------
+// Moderation queue
+// -----------------------------------------------------------------------------
+
+model ModerationItem {
+  id             String           @id @default(cuid())
+  organizationId String
+  type           ModerationType
+  reason         String
+  status         ModerationStatus @default(PENDING)
+  preview        String
+  refId          String?           // project_id | asset_id | scene_id
+  reviewedBy     String?           // admin user id
+  reviewedAt     DateTime?
+  createdAt      DateTime          @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("moderation_items")
+}
+
+// -----------------------------------------------------------------------------
+// API keys & Webhooks (Business+)
+// -----------------------------------------------------------------------------
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  prefix         String    // first 8 chars, shown to user
+  hashedKey      String    // bcrypt/sha256 of full key
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  revokedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("api_keys")
+}
+
+model Webhook {
+  id             String    @id @default(cuid())
+  organizationId String
+  url            String
+  secret         String    // HMAC signing secret
+  events         String[]  // ["render.completed", "render.failed", "credit.low"]
+  active         Boolean   @default(true)
+  lastResponse   Int?
+  lastSentAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("webhooks")
+}
+
+// -----------------------------------------------------------------------------
+// Audit log
+// -----------------------------------------------------------------------------
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String   // "plan.upgrade" | "project.delete" | "admin.impersonate" | ...
+  targetType     String?  // "project" | "user" | "subscription"
+  targetId       String?
+  metadata       Json?
+  ip             String?
+  userAgent       String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// -----------------------------------------------------------------------------
+// Dead-letter queue (BullMQ failed jobs that exhausted retries)
+// -----------------------------------------------------------------------------
+
+model DeadLetterJob {
+  id            String   @id @default(cuid())
+  jobName       String
+  jobQueue      JobQueueName
+  jobId         String
+  attempts      Int
+  data          Json
+  error         String
+  failedAt      DateTime @default(now())
+  requeuedAt    DateTime?
+  requeuedById  String?
+
+  @@index([jobQueue, failedAt])
+  @@map("dead_letter_jobs")
+}
