@@ -1,2 +1,102 @@
-skills/
+# Dependencies
 node_modules/
+.pnp/
+.pnp.js
+.yarn/install-state.gz
+bun.lockb
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+!.env.example
+
+# Logs
+*.log
+dev.log
+server.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+prisma/*.db
+prisma/migrations/dev.db*
+
+# Uploaded files & generated assets
+uploads/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.webm
+
+# OS / Editor
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+*.pid
+.zscripts/
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Cache
+.cache/
+.turbo/
+.eslintcache
+.stylelintcache
+
+# Sentry
+.sentryclirc
+
+# Prisma generated client (monorepo)
+packages/db/dist/
+packages/db/generated/
+
+# Vercel
+.vercel
+
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Sandbox / IDE artifacts (not for production repo)
+download/
+mini-services/
+tests/
+examples/
+skills/
+.zscripts/
+*.tar.gz
+README.md.bak

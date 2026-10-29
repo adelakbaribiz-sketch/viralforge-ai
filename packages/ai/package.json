@@ -1,0 +1,28 @@
+{
+  "name": "@viralforge/ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./moderation": "./src/moderation.ts",
+    "./copyright": "./src/copyright.ts",
+    "./gateway": "./src/gateway.ts",
+    "./cost-meter": "./src/cost-meter.ts",
+    "./circuit-breaker": "./src/circuit-breaker.ts",
+    "./rate-limiter": "./src/rate-limiter.ts",
+    "./providers/llm": "./src/providers/llm.ts",
+    "./providers/tts": "./src/providers/tts.ts",
+    "./providers/video": "./src/providers/video.ts",
+    "./providers/image": "./src/providers/image.ts",
+    "./providers/stock": "./src/providers/stock.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@viralforge/video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ffmpeg": "./src/ffmpeg.ts",
+    "./qc": "./src/qc.ts"
+  },
+  "dependencies": {
+    "@remotion/renderer": "^4.0.300",
+    "remotion": "^4.0.300"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}

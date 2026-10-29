@@ -1,0 +1,30 @@
+# Caddyfile — ViralForge AI reverse proxy
+# Routes :80 → web (3000) and /api → api (4000)
+
+:80 {
+  # Web (Next.js 16)
+  reverse_proxy web:3000
+
+  # API (Fastify)
+  handle /api/* {
+    uri strip_prefix /api
+    reverse_proxy api:4000
+  }
+
+  # Stripe webhook needs raw body; let Caddy pass through unchanged
+  handle /api/v1/billing/webhook {
+    uri strip_prefix /api
+    reverse_proxy api:4000
+  }
+
+  # SSE for render progress
+  handle /api/v1/render/*/progress {
+    uri strip_prefix /api
+    reverse_proxy api:4000 {
+      flush_interval -1
+      transport http {
+        read_timeout 5m
+      }
+    }
+  }
+}
